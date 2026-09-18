@@ -5,11 +5,6 @@ surgical ethics and turns them into something you can search over in
 plain English — "how do I approach a surrogate decision conversation" —
 and get back the actual relevant passages, not whole documents.
 
-This is the **retrieval half** of the point-of-care app. It does not yet
-generate a final written answer for a clinician to read — it finds the
-right raw material. That's the next layer to build (see "What's not built
-yet" below).
-
 ---
 
 ## The big picture
@@ -170,41 +165,3 @@ print(Counter(c.get('topic') for c in chunks))
 - ✅ Topic filtering works for free via your literature folder structure
 - ✅ Hybrid (vector + keyword) retrieval returns relevant, focused
   passages
-- ⏸️ LLM-based tagging (`content_type`, `authority_tier`, `state`) is
-  built but currently switched off — see below
-
-## What's not built yet
-
-1. **Generation layer.** Retrieval finds relevant passages; it doesn't
-   yet turn them into a single written answer a resident reads
-   mid-conversation. That's the next big piece — likely a prompt that
-   takes the top few retrieved passages and synthesizes a short,
-   structured, citation-backed answer.
-2. **LLM tagging (optional).** `content_type` (is this conversation
-   guidance vs. background research?) and `authority_tier` (which source
-   wins if two disagree?) aren't populated right now. Worth revisiting
-   only if plain topic-filtered retrieval turns out not to be precise
-   enough on its own.
-3. **Reranking.** Right now the top results come straight from
-   RRF-fused BM25 + vector scores. A reranking step (a cross-encoder that
-   re-scores the top ~20 candidates more carefully) could sharpen
-   precision further, if needed.
-4. **De-duplication.** Overlapping chunks from the same source
-   occasionally both appear in a result set (you'll see two adjacent
-   fragments of the same paper both show up). Not wrong, just something
-   to consider filtering later.
-5. **Reference-list noise.** Trailing citation lists inside PDFs are
-   still extracted as regular chunks. Low-value for retrieval, not
-   currently filtered out.
-
----
-
-## Known limitations worth remembering
-
-- `state` filtering exists in the code but your corpus has almost no
-  state-specific statute text yet — it's plumbing for a feature you
-  haven't populated.
-- The embedding model (`all-MiniLM-L6-v2`) is a small, fast baseline. If
-  retrieval quality plateaus, a stronger model (e.g. `bge-base-en-v1.5`)
-  is a likely upgrade path — swap `EMBEDDING_MODEL` in `embed_index.py`
-  and rebuild the index.
