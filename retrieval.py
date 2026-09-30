@@ -86,9 +86,21 @@ def hybrid_search(
 
 
 if __name__ == "__main__":
-    import sys
-    q = sys.argv[1] if len(sys.argv) > 1 else "how do I approach a surrogate decision conversation"
-    results = hybrid_search(q, index_dir="./index")
-    for r in results:
-        print(f"[{r['source_type']}] {r['source_title']} ({r.get('topic')}, {r.get('state')}) — score={r['score']:.4f}")
-        print(r["text"][:200], "...\n")
+    import argparse
+    from generate import format_citation
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("query", nargs="?", default="how do I approach a surrogate decision conversation")
+    parser.add_argument("--index-dir", default="./index")
+    parser.add_argument("--topic", default=None)
+    parser.add_argument("--top-k", type=int, default=4)
+    parser.add_argument("--chars", type=int, default=400, help="how much of each passage to print")
+    args = parser.parse_args()
+
+    results = hybrid_search(args.query, index_dir=args.index_dir, topic=args.topic, top_k=args.top_k)
+    if not results:
+        print("No results" + (f" for topic '{args.topic}'" if args.topic else "") + ".")
+    for n, r in enumerate(results, start=1):
+        print(f"[{n}] {format_citation(r)}")
+        print(f"    topic={r.get('topic')}  type={r['source_type']}  score={r['score']:.4f}")
+        print("    " + " ".join(r["text"].split())[:args.chars] + "...\n")
