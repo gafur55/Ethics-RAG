@@ -144,6 +144,37 @@ def extract_docx(path: str, source_type: str, topic_hint: Optional[str] = None) 
 # PDF (papers, book chapters, books)
 # ---------------------------------------------------------------------------
 
+# Front/back matter entries in a book's table of contents — pages under these
+# are dropped rather than indexed, since they'd only add noise to retrieval.
+SKIP_TOC_TITLES = {"contents", "index", "contributors", "about the editors", "about the authors"}
+
+
+def _chapter_by_page(doc) -> Dict[int, str]:
+    """
+    Maps page number -> chapter title using the PDF's embedded table of
+    contents (books have one; most papers don't, in which case this returns
+    {} and section_heading stays None). Uses TOC level 1 as the chapter
+    level, unless level 1 is "Part I/II/..." groupings, in which case the
+    chapters are one level down.
+    """
+    toc = doc.get_toc()
+    if not toc:
+        return {}
+    chapter_level = 2 if any(t[1].strip().lower().startswith("part ") for t in toc if t[0] == 1) else 1
+
+    entries = sorted(
+        [(page, " ".join(title.split())) for level, title, page in toc if level <= chapter_level and page > 0],
+        key=lambda e: e[0],
+    )
+    mapping, current = {}, None
+    for page_idx in range(1, doc.page_count + 1):
+        for page, title in entries:
+            if page == page_idx:
+                current = title
+        mapping[page_idx] = current
+    return mapping
+
+
 def extract_pdf(path: str, source_type: str, topic_hint: Optional[str] = None) -> List[Dict]:
     """
     Uses PyMuPDF (fitz). Chosen over pdfplumber/pypdf because it handles
@@ -155,8 +186,13 @@ def extract_pdf(path: str, source_type: str, topic_hint: Optional[str] = None) -
     doc = fitz.open(path)
     title = Path(path).stem
     units = []
+    chapters = _chapter_by_page(doc)
 
     for page_idx, page in enumerate(doc, start=1):
+        chapter = chapters.get(page_idx)
+        if chapter and chapter.lower() in SKIP_TOC_TITLES:
+            continue
+
         blocks = page.get_text("blocks")  # (x0, y0, x1, y1, text, block_no, block_type)
         # Sort top-to-bottom, then left-to-right — approximates correct
         # reading order for 2-column layouts better than raw stream order.
@@ -177,7 +213,7 @@ def extract_pdf(path: str, source_type: str, topic_hint: Optional[str] = None) -
                 "source_type": source_type,
                 "unit_type": "page",
                 "unit_index": page_idx,
-                "section_heading": None,  # headings resolved later in chunker via heuristics if needed
+                "section_heading": chapter,  # from the PDF's TOC when present (books), else None
                 "topic_hint": topic_hint,
             })
 

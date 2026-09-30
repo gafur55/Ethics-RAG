@@ -15,16 +15,15 @@ Deploy to Hugging Face Spaces:
        Spaces deployment)
     3. Set GROQ_API_KEY as a Space secret (Settings -> Repository secrets)
        — never commit it into a file
-    4. Make sure index/ (chunks.jsonl, embeddings.npy, bm25.pkl) is
+    4. Make sure index/chroma/ (the ChromaDB vector database) is
        committed to the repo, since the Space container starts fresh
        every time and has no access to your local data/ folder — it needs
        the prebuilt index, not the raw source files.
 """
 
-import json
-
 import gradio as gr
 
+from embed_index import load_indices
 from retrieval import hybrid_search
 from generate import generate_answer, TOP_K
 
@@ -33,11 +32,10 @@ INDEX_DIR = "./index"
 
 def _load_topics():
     try:
-        chunks = [json.loads(l) for l in open(f"{INDEX_DIR}/chunks.jsonl")]
-        topics = sorted({c.get("topic") for c in chunks if c.get("topic")})
-        return topics
-    except FileNotFoundError:
+        _, _, chunks, _ = load_indices(INDEX_DIR)
+    except Exception:  # no index built yet
         return []
+    return sorted({c.get("topic") for c in chunks if c.get("topic")})
 
 
 TOPICS = _load_topics()

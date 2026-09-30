@@ -14,7 +14,7 @@ flowchart LR
     A[Your files<br/>pptx, docx, pdf] --> B[Extraction<br/>extractors.py]
     B --> C[Chunking<br/>chunker.py]
     C --> D[Indexing<br/>embed_index.py]
-    D --> E[(index/<br/>chunks + vectors + keyword index)]
+    D --> E[(index/chroma/<br/>ChromaDB vector database)]
     E --> F[Retrieval<br/>retrieval.py]
     F --> G[Top matching<br/>passages]
 ```
@@ -26,9 +26,10 @@ In plain English:
    slide/page/paragraph).
 2. **Chunking** breaks that text into bite-sized pieces — small enough to
    be a focused, scannable passage, not a whole paper.
-3. **Indexing** turns each piece into two searchable forms: a vector
-   embedding (for "meaning" search) and a keyword index (for exact-term
-   search).
+3. **Indexing** embeds each piece and stores it — text, vector, and
+   metadata — in a local ChromaDB vector database (`index/chroma/`). The
+   keyword index (BM25) is rebuilt from those same stored texts whenever
+   the index is loaded, so Chroma is the single source of truth.
 4. **Retrieval** takes a question, searches both indexes, and combines
    the results into a single ranked list of the most relevant passages.
 
@@ -82,11 +83,13 @@ flowchart TD
         C2[Curriculum Presentations/]
         C3[Ethics Consult Cases/]
         C4[McCullough Chapter.pdf]
+    C5[books/]
     end
     C1 --> O[topic = other]
     C2 --> O
     C3 --> O
     C4 --> O
+    C5 --> O
 ```
 
 Your `Relevant Literature/` folder is organized by topic already (you
@@ -94,7 +97,14 @@ built that structure), so `pipeline.py` just reads the subfolder name and
 uses it directly as the `topic` tag — no AI model involved, no cost, and
 it's exactly as accurate as your own filing.
 
-Everything else (facilitator guides, slide decks, case files) doesn't
+Full textbooks go in `data/books/` (source_type `textbook`). Their chunks
+are labelled with the chapter they came from, taken from each PDF's table of
+contents, and their long download filenames are trimmed to "Title
+(Authors)". Metadata manifests named `*_sources.json` in `data/` (e.g. the
+AMA Journal of Ethics one) supply proper titles, years, and URLs for the
+files they list.
+
+Everything else (facilitator guides, slide decks, case files, books) doesn't
 have one topic per file — a single facilitator guide might cover five
 topics — so those chunks get tagged `other`. They're still fully
 searchable by keyword/meaning; they just don't participate in topic
@@ -108,7 +118,7 @@ filtering.
 |---|---|
 | `extractors.py` | Opens a pptx/docx/pdf and pulls out its text, page by page / slide by slide / paragraph by paragraph, into one common format |
 | `chunker.py` | Breaks that text into ~350-word passages with a bit of overlap between consecutive passages, so nothing gets cut off mid-thought |
-| `embed_index.py` | Turns every passage into a vector (for meaning search) and builds a keyword index (BM25); saves both to disk |
+| `embed_index.py` | Embeds every passage and stores it in a ChromaDB collection (`index/chroma/`); on load, rebuilds the BM25 keyword index from the stored texts |
 | `retrieval.py` | Given a question, searches both indexes and returns the best combined matches |
 | `pipeline.py` | The one script you actually run — walks your `data/` folder, calls the three steps above in order, and writes the `index/` folder |
 | `tagging.py` | **Optional, not used by default.** Uses an LLM (Groq) to guess extra metadata per chunk (legal fact vs. guidance vs. background reading, etc.). Currently skipped — see "What's not built yet" |
@@ -147,9 +157,9 @@ full list, or just check what topics actually exist in your index:
 
 ```bash
 python3 -c "
-import json
 from collections import Counter
-chunks = [json.loads(l) for l in open('index/chunks.jsonl')]
+from embed_index import load_indices
+_, _, chunks, _ = load_indices('./index')
 print(Counter(c.get('topic') for c in chunks))
 "
 ```

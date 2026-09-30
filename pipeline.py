@@ -28,6 +28,7 @@ new batch of files.
 """
 
 import argparse
+import json
 import re
 from pathlib import Path
 
@@ -42,7 +43,15 @@ FOLDER_TO_SOURCE_TYPE = {
     "Curriculum Facilitator Guides": "internal_curriculum",
     "Curriculum Presentations": "internal_curriculum",
     "Ethics Consult Cases": "case_example_source",
+    "books": "textbook",
 }
+
+# Optional per-file metadata manifests sitting in --data-dir (e.g. the AMA
+# Journal of Ethics download manifest). Each has a "documents" list whose
+# entries carry "file" (path relative to the project root) plus "title",
+# "year", "source_url" — used to give those files real citation titles
+# instead of their slugified filenames.
+METADATA_MANIFEST_GLOB = "*_sources.json"
 
 # The "Relevant Literature" folder is handled specially (see below): each of
 # ITS subfolders is a topic label, not a source_type. Everything under it is
@@ -74,9 +83,36 @@ def _normalize_topic_folder_name(name: str) -> str:
     return name
 
 
+def _load_manifests(data_path: Path) -> dict:
+    """resolved file path -> {"source_title", "source_year", "source_url"}"""
+    meta = {}
+    for manifest in data_path.glob(METADATA_MANIFEST_GLOB):
+        for doc in json.load(open(manifest)).get("documents", []):
+            meta[str(Path(doc["file"]).resolve())] = {
+                "source_title": doc.get("title"),
+                "source_year": doc.get("year"),
+                "source_url": doc.get("source_url"),
+            }
+    return meta
+
+
+def _clean_book_title(stem: str) -> str:
+    """
+    'Surgical Ethics -- edited by Laurence B_ McCullough, ... -- 1, FR, 1998 -- ...'
+      -> 'Surgical Ethics (edited by Laurence B. McCullough, ...)'
+    Filenames from the books/ folder pack title -- authors -- edition -- ...
+    into the stem; keep just title and authors.
+    """
+    parts = [p.strip() for p in stem.split(" -- ")]
+    if len(parts) < 2:
+        return stem
+    return f"{parts[0]} ({parts[1].replace('_', '.')})"
+
+
 def run_pipeline(data_dir: str, index_dir: str, do_tag: bool):
     data_path = Path(data_dir)
     all_units = []
+    manifest_meta = _load_manifests(data_path)
 
     def process_file(file_path: Path, source_type: str, topic_hint: str = None):
         if file_path.suffix.lower() not in (".pptx", ".docx", ".pdf"):
@@ -84,9 +120,16 @@ def run_pipeline(data_dir: str, index_dir: str, do_tag: bool):
         print(f"Extracting: {file_path}" + (f"  [topic_hint={topic_hint}]" if topic_hint else ""))
         try:
             units = extract_file(str(file_path), source_type, topic_hint)
-            all_units.extend(units)
         except Exception as e:
             print(f"  FAILED: {e}")
+            return
+
+        overrides = manifest_meta.get(str(file_path.resolve()), {})
+        if not overrides and source_type == "textbook":
+            overrides = {"source_title": _clean_book_title(file_path.stem)}
+        for u in units:
+            u.update({k: v for k, v in overrides.items() if v})
+        all_units.extend(units)
 
     for item in data_path.iterdir():
         if item.is_dir() and item.name.strip() == LITERATURE_FOLDER_NAME:

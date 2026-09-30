@@ -12,8 +12,11 @@ outranking the correct one.
 """
 
 from typing import List, Dict, Optional
-import numpy as np
-from embed_index import load_indices
+from embed_index import load_indices, _tokenize
+
+# How deep each ranker (dense, BM25) looks before fusion. Plenty for a top_k
+# of ~4 — anything below rank 50 in both lists can't win under RRF anyway.
+CANDIDATES_PER_RANKER = 50
 
 
 def _filter_indices(chunks: List[Dict], topic: Optional[str], state: Optional[str]) -> List[int]:
@@ -45,25 +48,31 @@ def hybrid_search(
     state: Optional[str] = None,
     top_k: int = 4,
 ):
-    embeddings, bm25, chunks, model = load_indices(index_dir)
+    collection, bm25, chunks, model = load_indices(index_dir)
 
     candidate_idxs = _filter_indices(chunks, topic, state)
     if not candidate_idxs:
         return []  # nothing matches the filter — caller should handle the
         # "no answer found, refer to X" fallback here rather than falling
         # back to unfiltered search
+    candidate_set = set(candidate_idxs)
+    n_candidates = min(CANDIDATES_PER_RANKER, len(candidate_idxs))
 
-    # --- dense ranking within candidates ---
+    # --- dense ranking within candidates (Chroma, topic pre-filtered) ---
     query_vec = model.encode([query], normalize_embeddings=True)[0]
-    candidate_embeddings = embeddings[candidate_idxs]
-    dense_scores = candidate_embeddings @ query_vec
-    dense_order = [candidate_idxs[i] for i in np.argsort(-dense_scores)]
+    dense = collection.query(
+        query_embeddings=[query_vec.tolist()],
+        n_results=n_candidates,
+        where={"topic": topic} if topic else None,
+        include=[],
+    )
+    dense_order = [int(i) for i in dense["ids"][0] if int(i) in candidate_set]
 
     # --- BM25 ranking within candidates ---
-    tokenized_query = query.lower().split()
+    tokenized_query = _tokenize(query)
     all_bm25_scores = bm25.get_scores(tokenized_query)
     candidate_bm25 = [(i, all_bm25_scores[i]) for i in candidate_idxs]
-    bm25_order = [i for i, _ in sorted(candidate_bm25, key=lambda x: -x[1])]
+    bm25_order = [i for i, _ in sorted(candidate_bm25, key=lambda x: -x[1])][:n_candidates]
 
     # --- fuse ---
     fused_scores = _rrf_fuse([dense_order, bm25_order])

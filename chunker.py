@@ -156,4 +156,6 @@ def _make_chunk(unit_group: List[Dict], source_path: str, heading, unit_type: st
         "unit_type": unit_type,
         "unit_range": [first["unit_index"], last["unit_index"]],
         "topic_hint": first.get("topic_hint"),
+        "source_year": first.get("source_year"),
+        "source_url": first.get("source_url"),
     }
