@@ -1,40 +1,36 @@
 """
 pipeline.py
 
-End-to-end orchestrator, tuned to your actual data/ layout:
+Builds the index end to end — extract -> chunk -> embed/store — tuned to
+your actual data/ layout:
 
     data/
       Curriculum Facilitator Guides/   -> source_type=internal_curriculum
       Curriculum Presentations/        -> source_type=internal_curriculum
       Ethics Consult Cases/            -> source_type=case_example_source
+      books/                           -> source_type=textbook
       McCullough Chapter.pdf           -> loose file, source_type=textbook (DEFAULT_ROOT_SOURCE_TYPE)
+      *_sources.json                   -> metadata manifests (titles/years/URLs)
       Relevant Literature/             -> special-cased: source_type=journal_article,
         Surrogate Decision Making/         AND topic_hint pulled from the subfolder name
         DNR in OR/                         (e.g. "surrogate_decision_making")
         ... (any subfolder)
 
 Because your literature subfolders are already organized by topic, that
-topic_hint gets carried through extraction -> chunking -> tagging and
-overrides whatever the LLM would otherwise guess. This is both cheaper and
-more accurate than free-form topic inference for those ~60 papers.
+topic_hint becomes each chunk's `topic` directly — no LLM tagging, and
+exactly as accurate as your own filing. Everything else gets topic "other".
 
-Run:
-
-    python pipeline.py --data-dir ./data --index-dir ./index --tag
-
-Use --tag only once you're ready to spend the API calls — it's the slow,
-costly step. Skip it while you're just testing extraction/chunking on a
-new batch of files.
+Run via:  python rag.py build
 """
 
-import argparse
 import json
 import re
 from pathlib import Path
 
-from extractors import extract_file
-from chunker import chunk_units
-from embed_index import build_indices
+from .chunker import chunk_units
+from .config import DATA_DIR, INDEX_DIR, PROJECT_ROOT
+from .extractors import extract_file
+from .vectorstore import build_indices
 
 # Keys are matched against folder.name.strip() so trailing spaces in your
 # actual folder names (e.g. "Curriculum Facilitator Guides ") don't cause
@@ -71,9 +67,6 @@ def _normalize_topic_folder_name(name: str) -> str:
     'Disagreements w Colleagues-Attendings' -> 'disagreements_with_colleagues_attendings'
     'Futility (Inappropriate Treatment) '   -> 'futility'   (parenthetical dropped)
     'DNR in OR'                             -> 'dnr_in_or'
-    Must line up with TOPIC_TAXONOMY in tagging.py — if a mapping here doesn't
-    match an entry there, tagging.py will still accept it (topic_hint bypasses
-    the taxonomy check), but retrieval filtering works best when they align.
     """
     name = name.strip()
     name = re.sub(r"\s*\([^)]*\)", "", name)  # drop "(Inappropriate Treatment)"
@@ -88,7 +81,7 @@ def _load_manifests(data_path: Path) -> dict:
     meta = {}
     for manifest in data_path.glob(METADATA_MANIFEST_GLOB):
         for doc in json.load(open(manifest)).get("documents", []):
-            meta[str(Path(doc["file"]).resolve())] = {
+            meta[str((PROJECT_ROOT / doc["file"]).resolve())] = {
                 "source_title": doc.get("title"),
                 "source_year": doc.get("year"),
                 "source_url": doc.get("source_url"),
@@ -109,7 +102,7 @@ def _clean_book_title(stem: str) -> str:
     return f"{parts[0]} ({parts[1].replace('_', '.')})"
 
 
-def run_pipeline(data_dir: str, index_dir: str, do_tag: bool):
+def run_pipeline(data_dir=DATA_DIR, index_dir=INDEX_DIR):
     data_path = Path(data_dir)
     all_units = []
     manifest_meta = _load_manifests(data_path)
@@ -127,7 +120,14 @@ def run_pipeline(data_dir: str, index_dir: str, do_tag: bool):
         overrides = manifest_meta.get(str(file_path.resolve()), {})
         if not overrides and source_type == "textbook":
             overrides = {"source_title": _clean_book_title(file_path.stem)}
+        # Store paths relative to the project root, so the index doesn't
+        # break if the project folder is moved or copied elsewhere.
+        try:
+            rel_path = str(file_path.resolve().relative_to(PROJECT_ROOT))
+        except ValueError:  # data dir outside the project
+            rel_path = str(file_path)
         for u in units:
+            u["source_path"] = rel_path
             u.update({k: v for k, v in overrides.items() if v})
         all_units.extend(units)
 
@@ -148,8 +148,7 @@ def run_pipeline(data_dir: str, index_dir: str, do_tag: bool):
                 continue
             for file_path in item.rglob("*"):
                 process_file(file_path, source_type)  # no topic_hint — these
-                # folders span multiple topics per file, so topic is left for
-                # the LLM tagging step to infer
+                # folders span multiple topics per file
         else:
             # loose file directly under data_dir, e.g. McCullough Chapter.pdf
             process_file(item, DEFAULT_ROOT_SOURCE_TYPE)
@@ -159,32 +158,10 @@ def run_pipeline(data_dir: str, index_dir: str, do_tag: bool):
     chunks = chunk_units(all_units)
     print(f"Chunked into {len(chunks)} chunks.")
 
-    if do_tag:
-        from tagging import tag_chunks
-        print("Tagging chunks with LLM (batched requests, ~8 chunks per call)...")
-        chunks = tag_chunks(chunks)
-    else:
-        # No LLM call needed: topic_hint already came from the literature
-        # subfolder names, so use it directly as topic. Chunks with no
-        # topic_hint (curriculum/facilitator/case files, which span multiple
-        # topics per file) get "other" — retrieval can still find them via
-        # BM25/vector search, just not via topic filtering.
-        # content_type/state/authority_tier are simply left unset; retrieval
-        # only filters on topic/state, and state was mostly empty in your
-        # corpus anyway (no state statute text yet).
-        print("Skipping LLM tagging — using topic_hint directly as topic "
-              "(no content_type/state/authority_tier metadata).")
-        for c in chunks:
-            c["topic"] = c.get("topic_hint") or "other"
+    # topic_hint came from the literature subfolder names; chunks without
+    # one (curriculum, cases, books — multiple topics per file) get "other".
+    # They're still found by BM25/vector search, just not by topic filtering.
+    for c in chunks:
+        c["topic"] = c.get("topic_hint") or "other"
 
-    build_indices(chunks, index_dir)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir", required=True)
-    parser.add_argument("--index-dir", required=True)
-    parser.add_argument("--tag", action="store_true")
-    args = parser.parse_args()
-
-    run_pipeline(args.data_dir, args.index_dir, args.tag)
+    build_indices(chunks, str(index_dir))

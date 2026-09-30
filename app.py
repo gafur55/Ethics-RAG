@@ -3,7 +3,9 @@ app.py
 
 Gradio web app for the surgical ethics RAG system — same pattern as your
 Mohs Surgery RAG space, wired up to this project's retrieval + generation
-modules instead of rebuilding anything from scratch.
+modules instead of rebuilding anything from scratch. Not used yet — the
+command line (rag.py) is the main interface for now; needs
+`pip install gradio`.
 
 Run locally:
     python app.py
@@ -23,15 +25,15 @@ Deploy to Hugging Face Spaces:
 
 import gradio as gr
 
-from embed_index import load_indices
-from generate import generate_answer, format_citation
-
-INDEX_DIR = "./index"
+from ethics_rag.citations import format_citation
+from ethics_rag.config import INDEX_DIR
+from ethics_rag.generate import generate_answer
+from ethics_rag.vectorstore import load_indices
 
 
 def _load_topics():
     try:
-        _, _, chunks, _ = load_indices(INDEX_DIR)
+        _, _, chunks, _ = load_indices(str(INDEX_DIR))
     except Exception:  # no index built yet
         return []
     return sorted({c.get("topic") for c in chunks if c.get("topic")})

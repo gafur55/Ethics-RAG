@@ -2,7 +2,7 @@
 extractors.py
 
 Converts heterogeneous source files (pptx, docx, pdf) into a single common
-schema so downstream chunking/tagging/embedding doesn't need to know what
+schema so downstream chunking/embedding doesn't need to know what
 format the content originally came from.
 
 Common unit schema (one dict per paragraph/slide/page-block):
@@ -21,8 +21,8 @@ Common unit schema (one dict per paragraph/slide/page-block):
 You are expected to set `source_type` per-file (or per-folder) based on where
 the file came from — see pipeline.py for how that gets assigned. `topic_hint`
 is optional: pass it when the folder structure already tells you the topic
-(e.g. a "Surrogate Decision Making" literature subfolder) so downstream
-tagging can trust it instead of re-inferring topic from scratch.
+(e.g. a "Surrogate Decision Making" literature subfolder); it becomes the
+chunk's `topic` for retrieval filtering.
 """
 
 from pathlib import Path

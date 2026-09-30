@@ -1,5 +1,5 @@
 """
-embed_index.py
+vectorstore.py
 
 Builds both halves of your hybrid search from Module 2:
 - Dense vector index: a persistent ChromaDB collection (index/chroma/) holding
@@ -11,7 +11,7 @@ Builds both halves of your hybrid search from Module 2:
 
 Embeddings are computed here with sentence-transformers rather than by
 Chroma's built-in embedding function, so indexing and querying are
-guaranteed to use the same model (see EMBEDDING_MODEL).
+guaranteed to use the same model (see EMBEDDING_MODEL in config.py).
 """
 
 from functools import lru_cache
@@ -22,12 +22,7 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 
-
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # fast, solid baseline; swap for a
-# stronger model (e.g. "BAAI/bge-base-en-v1.5") once you're validating
-# retrieval quality rather than just wiring things up
-
-COLLECTION_NAME = "ethics_chunks"
+from .config import COLLECTION_NAME, EMBEDDING_MODEL
 
 
 def _to_metadata(chunk: Dict) -> Dict:
@@ -47,7 +42,7 @@ def _from_record(text: str, meta: Dict) -> Dict:
     return chunk
 
 
-def _tokenize(text: str) -> List[str]:
+def tokenize(text: str) -> List[str]:
     return text.lower().split()
 
 
@@ -96,6 +91,6 @@ def load_indices(index_dir: str):
     order = sorted(range(len(records["ids"])), key=lambda i: int(records["ids"][i]))
     chunks = [_from_record(records["documents"][i], records["metadatas"][i]) for i in order]
 
-    bm25 = BM25Okapi([_tokenize(c["text"]) for c in chunks])
+    bm25 = BM25Okapi([tokenize(c["text"]) for c in chunks])
     model = SentenceTransformer(EMBEDDING_MODEL)
     return collection, bm25, chunks, model

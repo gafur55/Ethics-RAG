@@ -3,7 +3,8 @@
 A system that takes a folder of PDFs, PowerPoints, and Word docs about
 surgical ethics and turns them into something you can search over in
 plain English — "how do I approach a surrogate decision conversation" —
-and get back the actual relevant passages, not whole documents.
+and get back the actual relevant passages, not whole documents — plus a
+short answer written from those passages, citing each one by number.
 
 ---
 
@@ -13,10 +14,11 @@ and get back the actual relevant passages, not whole documents.
 flowchart LR
     A[Your files<br/>pptx, docx, pdf] --> B[Extraction<br/>extractors.py]
     B --> C[Chunking<br/>chunker.py]
-    C --> D[Indexing<br/>embed_index.py]
+    C --> D[Indexing<br/>vectorstore.py]
     D --> E[(index/chroma/<br/>ChromaDB vector database)]
     E --> F[Retrieval<br/>retrieval.py]
     F --> G[Top matching<br/>passages]
+    G --> H[Cited answer<br/>generate.py]
 ```
 
 In plain English:
@@ -112,17 +114,26 @@ filtering.
 
 ---
 
-## What's actually in each file
+## Project layout
 
-| File | What it does |
-|---|---|
-| `extractors.py` | Opens a pptx/docx/pdf and pulls out its text, page by page / slide by slide / paragraph by paragraph, into one common format |
-| `chunker.py` | Breaks that text into ~350-word passages with a bit of overlap between consecutive passages, so nothing gets cut off mid-thought |
-| `embed_index.py` | Embeds every passage and stores it in a ChromaDB collection (`index/chroma/`); on load, rebuilds the BM25 keyword index from the stored texts |
-| `retrieval.py` | Given a question, searches both indexes and returns the best combined matches |
-| `pipeline.py` | The one script you actually run — walks your `data/` folder, calls the three steps above in order, and writes the `index/` folder |
-| `tagging.py` | **Optional, not used by default.** Uses an LLM (Groq) to guess extra metadata per chunk (legal fact vs. guidance vs. background reading, etc.). Currently skipped — see "What's not built yet" |
-| `retag_failed.py` | **Optional, only useful alongside tagging.py.** Re-runs LLM tagging on chunks that failed the first time, without redoing the whole pipeline |
+```
+ethics_rag/
+├── rag.py               ← the one command you run (build / search / ask / topics)
+├── ethics_rag/          ← the code
+│   ├── config.py        ← all paths, model names, and tuning knobs
+│   ├── extractors.py    ← opens pptx/docx/pdf, pulls out text page/slide/paragraph by paragraph
+│   ├── chunker.py       ← breaks text into ~350-word passages with a little overlap
+│   ├── pipeline.py      ← walks data/, runs extract -> chunk -> store
+│   ├── vectorstore.py   ← stores passages in ChromaDB; rebuilds BM25 keyword index on load
+│   ├── retrieval.py     ← hybrid search (vector + keyword, fused with RRF)
+│   ├── generate.py      ← asks Groq for a short answer citing passages [1]..[n]
+│   └── citations.py     ← "Title (year), "Chapter", PDF pp. 3-4" labels
+├── app.py               ← Gradio web app (not used yet)
+├── data/                ← your source files (gitignored)
+├── index/chroma/        ← the vector database, built from data/ (gitignored)
+├── .env                 ← your GROQ_API_KEY (gitignored; copy from .env.example)
+└── requirements.txt
+```
 
 ---
 
@@ -130,39 +141,32 @@ filtering.
 
 ```bash
 # one-time setup
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env         # then paste your Groq key into .env
 
-# rebuild the index from your data/ folder (takes a few seconds)
-python pipeline.py --data-dir ./data --index-dir ./index
+# rebuild the vector database from data/ (a few minutes — re-run after adding files)
+python rag.py build
 
-# ask it something
-python retrieval.py "how do I approach a surrogate decision conversation"
+# see which passages retrieval finds — no LLM call, free
+python rag.py search "how do I approach a surrogate decision conversation"
+python rag.py search "suspending DNR orders" --topic dnr_in_or --top-k 8 --chars 1000
+
+# get a short cited answer (calls Groq)
+python rag.py ask "how do I approach a surrogate decision conversation"
+python rag.py ask "how do I handle a DNR order before surgery" --topic dnr_in_or
+
+# list valid --topic values and how many passages each has
+python rag.py topics
 ```
 
-To filter by topic:
-
-```python
-from retrieval import hybrid_search
-results = hybrid_search(
-    "how do I approach a surrogate decision conversation",
-    index_dir="./index",
-    topic="surrogate_decision_making",
-)
-```
-
-Valid topic values are the 11 subfolder names under `Relevant Literature/`,
+Topic values are the subfolder names under `Relevant Literature/`,
 normalized to lowercase with underscores (e.g. `dnr_in_or`,
-`goals_of_care_in_surgery`) — see `TOPIC_TAXONOMY` in `tagging.py` for the
-full list, or just check what topics actually exist in your index:
+`goals_of_care_in_surgery`), plus `other` for everything else.
 
-```bash
-python3 -c "
-from collections import Counter
-from embed_index import load_indices
-_, _, chunks, _ = load_indices('./index')
-print(Counter(c.get('topic') for c in chunks))
-"
-```
+Citations give **PDF page numbers** — the page as shown in a PDF viewer,
+not the printed page number in a book.
 
 ---
 
@@ -170,8 +174,8 @@ print(Counter(c.get('topic') for c in chunks))
 
 - ✅ Extraction works cleanly across all three formats, including
   two-column academic PDFs
-- ✅ Chunking produces consistent ~300-350 word passages (verified: median
-  315 words, max 400, zero outliers)
+- ✅ Chunking produces consistent ~300-350 word passages
 - ✅ Topic filtering works for free via your literature folder structure
-- ✅ Hybrid (vector + keyword) retrieval returns relevant, focused
-  passages
+- ✅ Books are chapter-labelled from their tables of contents
+- ✅ Hybrid (vector + keyword) retrieval over a ChromaDB vector database
+- ✅ Short answers from Groq, with numbered citations to page/slide

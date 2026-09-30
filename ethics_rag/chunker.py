@@ -25,8 +25,8 @@ Design choices worth knowing about:
 from typing import List, Dict
 import itertools
 
-DEFAULT_CHUNK_WORDS = 350
-DEFAULT_OVERLAP_WORDS = 50
+from .config import CHUNK_WORDS, OVERLAP_WORDS
+
 NO_MERGE_TYPES = {"table", "slide_notes"}
 
 
@@ -70,8 +70,8 @@ def _split_oversized_unit(unit: Dict, max_words: int) -> List[Dict]:
 
 def chunk_units(
     units: List[Dict],
-    chunk_words: int = DEFAULT_CHUNK_WORDS,
-    overlap_words: int = DEFAULT_OVERLAP_WORDS,
+    chunk_words: int = CHUNK_WORDS,
+    overlap_words: int = OVERLAP_WORDS,
 ) -> List[Dict]:
     """
     units: output of extractors.extract_file (already grouped per source file)
