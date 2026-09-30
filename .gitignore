@@ -10,3 +10,6 @@ index/
 .env
 data/
 .DS_Store
+
+# eval results contain generated answers paraphrasing copyrighted sources
+eval/runs/

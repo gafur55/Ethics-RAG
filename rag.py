@@ -5,6 +5,8 @@ rag.py — the one command-line entry point.
     python rag.py search "question" [--topic T]  # retrieval only, no LLM
     python rag.py ask "question" [--topic T]     # retrieval + Groq answer
     python rag.py topics                         # list topic values + counts
+    python rag.py eval-questions                 # one-time: build the AI test set
+    python rag.py eval [--answers 30]            # score quality, compare with last run
 """
 
 import argparse
@@ -47,6 +49,19 @@ def cmd_topics(args):
         print(f"{count:6d}  {topic}")
 
 
+def cmd_eval_questions(args):
+    from ethics_rag.evaluation import QUESTIONS_FILE, generate_questions
+    if QUESTIONS_FILE.exists() and not args.overwrite:
+        raise SystemExit(f"{QUESTIONS_FILE.name} already exists — scores are only comparable on the "
+                         "same questions. Pass --overwrite to replace it anyway.")
+    generate_questions(n=args.n, index_dir=args.index_dir)
+
+
+def cmd_eval(args):
+    from ethics_rag.evaluation import run_eval
+    run_eval(index_dir=args.index_dir, top_k=args.top_k, answers=args.answers, note=args.note)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Clinical ethics RAG")
     parser.add_argument("--index-dir", default=INDEX_DIR)
@@ -70,6 +85,18 @@ def main():
 
     p = sub.add_parser("topics", help="list topic values and chunk counts")
     p.set_defaults(func=cmd_topics)
+
+    p = sub.add_parser("eval-questions", help="one-time: have AI write the test question set")
+    p.add_argument("--n", type=int, default=100, help="number of on-topic questions")
+    p.add_argument("--overwrite", action="store_true")
+    p.set_defaults(func=cmd_eval_questions)
+
+    p = sub.add_parser("eval", help="score retrieval (and optionally answers) on the test set")
+    p.add_argument("--top-k", type=int, default=TOP_K)
+    p.add_argument("--answers", type=int, default=0, metavar="N",
+                   help="also generate and AI-grade N answers (calls Groq; ~2 calls each)")
+    p.add_argument("--note", default="", help="label for this run, e.g. 'bge embeddings'")
+    p.set_defaults(func=cmd_eval)
 
     args = parser.parse_args()
     args.func(args)

@@ -40,6 +40,7 @@ answer from that text only, so the AI isn't answering from memory.
 - [Part 4: The vector database](#part-4-the-vector-database)
 - [Part 5: Retrieval — finding the right passages](#part-5-retrieval--finding-the-right-passages)
 - [Part 6: Generation — writing the cited answer](#part-6-generation--writing-the-cited-answer)
+- [Part 7: Measuring quality with AI](#part-7-measuring-quality-with-ai)
 - [Citations](#citations)
 - [Project layout](#project-layout)
 - [Settings you can change](#settings-you-can-change)
@@ -118,6 +119,8 @@ All commands:
 | `python rag.py search "…"` | Shows the matching passages, with no AI call | `--topic`, `--top-k 8`, `--chars 1000` |
 | `python rag.py ask "…"` | Returns a short cited answer | `--topic` |
 | `python rag.py topics` | Lists topic labels and how many passages each has | |
+| `python rag.py eval-questions` | One time: has AI write the test question set | `--n 100` |
+| `python rag.py eval` | Scores quality and compares with the last run ([Part 7](#part-7-measuring-quality-with-ai)) | `--answers 30`, `--note "…"` |
 
 Activate the virtual environment first (`source .venv/bin/activate`).
 
@@ -388,6 +391,90 @@ locally.
 
 ---
 
+## Part 7: Measuring quality with AI
+
+There are no experts available to grade the system, so AI does the grading
+in two ways. Both only check things that **don't need medical expertise**.
+
+### Retrieval: questions with a known answer
+
+```mermaid
+flowchart LR
+    P["📄 Random passage<br/>e.g. Torke 2008, p. 3"] --> Q["🤖 Judge AI writes a question<br/>a resident might ask,<br/>in their own words"]
+    Q --> S["🔍 Your search runs"]
+    S --> C{"Torke 2008 p. 3<br/>in the top 4?"}
+    C -->|yes| H["✅ hit"]
+    C -->|no| M["❌ miss"]
+```
+
+The right answer is known because it's the passage the question was
+written from. Passages are sampled evenly across topics and source types, so
+small topics aren't drowned out by the textbooks. The AI is told to
+paraphrase rather than copy the passage's wording, so search can't win just
+by matching words.
+
+### Answers: an AI grader checks them against the passages
+
+The system answers a sample of the questions. Then a **larger judge model**
+(`gpt-oss-120b`, while answers come from `gpt-oss-20b`) reads each answer
+next to the passages it was given and checks every claim:
+
+| Score | What it means | Good value |
+|---|---|---|
+| **Faithfulness** | % of claims that some passage actually supports. The rest are made up | as close to 100% as possible |
+| **Citation accuracy** | % of claims whose own `[n]` points to a passage that supports it | high |
+| **Uncited claims** | % of claims with no `[n]` at all | low |
+| **Relevance** | 1–5: does the answer address the question? | ~5 |
+| **Off-topic refused** | For 10 questions deliberately outside the library (heparin dosing, suture choice…), % where the system says the sources don't cover it | 100% |
+| **False refusals** | % of answers that refused even though the right passage *was* found | low |
+
+The judge **does not** decide whether advice is clinically wise. Only an
+expert can do that. It only checks that answers stick to your sources.
+
+### Running it
+
+```bash
+# one time: have AI write the test set -> eval/questions.jsonl
+python rag.py eval-questions
+
+# score retrieval only: free, about a minute
+python rag.py eval --note "what I changed"
+
+# also grade 30 answers (~80 Groq calls; ~20 min on the free tier's 8k tokens/min limit)
+python rag.py eval --answers 30 --note "what I changed"
+```
+
+Each run prints its scores **next to the previous run's**, so you can see
+right away whether a change helped:
+
+```
+  Source passage found               72.0%   (was 65.0%, +7.0pts)
+```
+
+Every question, answer, and verdict is saved to `eval/runs/<date-time>.json`.
+These files are kept out of git, because the answers paraphrase copyrighted
+sources.
+
+**Keep the same question set.** Scores can only be compared on the same
+questions, which is why `eval-questions` refuses to overwrite an existing
+set unless you pass `--overwrite`.
+
+### Checking the checker
+
+Once in a while, open a run file and read about 15 of the judge's verdicts
+yourself. You don't need medical knowledge for this: read a claim, read the
+passage it cites, and ask whether the passage says it. If you mostly agree
+with the judge, its scores can be trusted.
+
+Two known quirks:
+- Some questions have **more than one good passage**, so a "miss" isn't
+  always a real miss. The "source document found" score is more
+  forgiving.
+- Questions written from **facilitator guides** tend to be teaching
+  questions ("how do I run this session?") rather than resident questions.
+
+---
+
 ## Citations
 
 Every passage gets a readable label, built by [`citations.py`](ethics_rag/citations.py):
@@ -423,10 +510,13 @@ ethics_rag/
 │   ├── vectorstore.py     ←   3. store in ChromaDB (+ rebuild keyword index on load)
 │   ├── retrieval.py       ← ASK: hybrid search
 │   ├── generate.py        ← ASK: Groq answer with citations
+│   ├── evaluation.py      ← EVAL: AI-written test set + AI grader
 │   └── citations.py       ← citation labels
 ├── app.py                 ← web app (Gradio), not in use yet
 ├── data/                  ← your source files          (not in git)
 ├── index/chroma/          ← the vector database        (not in git, rebuild anytime)
+├── eval/questions.jsonl   ← the test question set
+├── eval/runs/             ← scores from every eval run (not in git)
 ├── .env                   ← your GROQ_API_KEY          (not in git)
 ├── .env.example           ← template for .env
 └── requirements.txt
@@ -449,6 +539,7 @@ All in [`ethics_rag/config.py`](ethics_rag/config.py):
 | `TOP_K` | `4` | How many passages the AI sees | no |
 | `CANDIDATES_PER_RANKER` | `50` | How deep each search looks before combining | no |
 | `GROQ_MODEL` | `openai/gpt-oss-20b` | The AI model that writes answers | no |
+| `JUDGE_MODEL` | `openai/gpt-oss-120b` | The AI that writes test questions and grades answers | no |
 
 "Rebuild needed" means you must run `python rag.py build` afterwards. For
 the embedding model this is essential: questions and passages must be
@@ -509,8 +600,8 @@ of the exact passages the AI would see.
 - **One book has no table of contents** (*The Ethics of Surgical Practice*),
   so its passages have no chapter labels.
 - **DRM-protected files** (`.lcpdf`) can't be read and are skipped.
-- **No quality measurement yet.** There's no test set of questions with
-  known correct sources, so retrieval quality has only been checked by eye.
+- **Quality is measured by AI, not experts.** See Part 7. It checks that
+  answers stick to the sources, not whether the advice is clinically sound.
 - **Copyright.** The textbooks and AMA articles are copyrighted. Keep
   `data/` and `index/` private and don't publish them, e.g. to a public
   web app.

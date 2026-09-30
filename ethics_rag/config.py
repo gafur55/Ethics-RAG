@@ -34,3 +34,8 @@ TOP_K = 4
 
 # --- generation ---
 GROQ_MODEL = "openai/gpt-oss-20b"
+
+# --- evaluation ---
+# Writes the test questions and grades answers. Deliberately larger than
+# GROQ_MODEL, so the answer model isn't grading its own work.
+JUDGE_MODEL = "openai/gpt-oss-120b"
