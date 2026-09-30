@@ -24,8 +24,7 @@ Deploy to Hugging Face Spaces:
 import gradio as gr
 
 from embed_index import load_indices
-from retrieval import hybrid_search
-from generate import generate_answer, TOP_K
+from generate import generate_answer, format_citation
 
 INDEX_DIR = "./index"
 
@@ -46,16 +45,17 @@ def ask(question: str, topic: str):
         return "Enter a question above.", ""
 
     topic_filter = None if topic == "All topics" else topic
-    answer = generate_answer(question, index_dir=INDEX_DIR, topic=topic_filter)
+    answer, results = generate_answer(question, index_dir=INDEX_DIR, topic=topic_filter)
 
-    # Also show the raw retrieved sources underneath, collapsed — useful
-    # for a resident (or a reviewer) who wants to sanity-check where the
-    # answer actually came from, without cluttering the main answer.
-    results = hybrid_search(question, index_dir=INDEX_DIR, topic=topic_filter, top_k=TOP_K)
+    # Also show the numbered sources underneath, collapsed — these are the
+    # exact passages the model saw, so the answer's [n] citations map onto
+    # them directly for a resident (or a reviewer) who wants to sanity-check.
     if results:
         sources_md = "\n\n".join(
-            f"**{r['source_title']}** (score={r['score']:.4f})\n\n{r['text'][:400]}..."
-            for r in results
+            f"**[{n}] {format_citation(r)}**"
+            + (f" — [link]({r['source_url']})" if r.get("source_url") else "")
+            + f"\n\n{r['text'][:400]}..."
+            for n, r in enumerate(results, start=1)
         )
     else:
         sources_md = "No sources retrieved."
