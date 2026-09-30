@@ -8,4 +8,5 @@ numpy==1.26.4
 tqdm==4.66.4
 anthropic>=0.40.0  # optional — only needed if you switch tagging.py back to Claude
 groq>=0.11.0
+python-dotenv>=1.0.0
 gradio>=4.44.0

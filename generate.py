@@ -21,9 +21,15 @@ import argparse
 import math
 import os
 
+from dotenv import load_dotenv
 from groq import Groq
 
 from retrieval import hybrid_search
+
+# Picks up GROQ_API_KEY from a local .env file (gitignored) if present.
+# Real environment variables — e.g. Hugging Face Space secrets — take
+# precedence, since load_dotenv doesn't override existing ones.
+load_dotenv()
 
 GROQ_MODEL = "openai/gpt-oss-20b"
 
