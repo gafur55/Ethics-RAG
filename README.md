@@ -47,6 +47,7 @@ answer from that text only, so the AI isn't answering from memory.
 - [Common tasks](#common-tasks)
 - [Troubleshooting](#troubleshooting)
 - [Known limitations](#known-limitations)
+- [Status and next steps](#status-and-next-steps)
 
 ---
 
@@ -584,6 +585,7 @@ of the exact passages the AI would see.
 | `No results for topic '…'` | Topic label misspelled. Check `python rag.py topics`. |
 | `Skipping unrecognized folder` during build | Add the folder to `FOLDER_TO_SOURCE_TYPE` in `pipeline.py`. |
 | `MuPDF error: format error: No default Layer config` | Harmless warning from one PDF; ignore it. |
+| `429 Rate limit reached … tokens per day` during `eval --answers` | Groq free tier: `gpt-oss-120b` allows 200k tokens/day and 8k/minute. The run keeps what was graded and marks it INCOMPLETE. Rerun the next day. Retrieval-only `eval` never calls Groq. |
 | `ModuleNotFoundError: No module named …` | Activate the virtual environment: `source .venv/bin/activate`. |
 
 ---
@@ -605,3 +607,49 @@ of the exact passages the AI would see.
 - **Copyright.** The textbooks and AMA articles are copyrighted. Keep
   `data/` and `index/` private and don't publish them, e.g. to a public
   web app.
+
+---
+
+## Status and next steps
+
+### Baseline scores (29 Sep 2026)
+
+Retrieval, from `python rag.py eval` on the 100-question test set, top 4:
+
+| Measure | Score |
+|---|---|
+| Exact source passage found | **64%** |
+| Source document found | **76%** |
+| MRR | 0.49 |
+
+- **Strongest:** textbooks, consult cases, futility (86–100%).
+- **Weakest:** resident involvement (17%), informed consent (33%),
+  intraoperative teaching and treatment over objection (43%).
+
+Inspecting the misses shows most still return *relevant* papers on the
+same topic, just not the exact passage. They also show one book often
+taking 2 of the 4 slots.
+
+**Answer grading has no baseline yet.** The first run hit Groq's daily
+token limit. Run this on a fresh day:
+
+```bash
+python rag.py eval --answers 30 --note "baseline"
+```
+
+### Planned improvements, in order
+
+Each change gets its own eval run and commit. Anything that doesn't help
+gets reverted.
+
+| # | Change | Why |
+|---|---|---|
+| 1 | Max 2 passages per document in the top 4 | ~25% of answer slots are repeats of the same document |
+| 2 | Keyword search ignores punctuation and filler words | `surrogate,` currently doesn't match `surrogate` |
+| 3 | Try `BAAI/bge-base-en-v1.5` embeddings | Stronger meaning search; needs a rebuild |
+| 4 | Rerank the top ~20 with a local cross-encoder | Usually the biggest single retrieval gain |
+| 5 | Topic labels for book chapters | ~2,500 book passages are unreachable with `--topic` |
+| 6 | Automatic citation checks, and possibly a stronger answer model | Answer quality |
+| 7 | Data cleanup: duplicate McCullough chapter, `.lcpdf`, real titles for file-named papers | Cleaner citations, less duplicate text |
+| later | Web app (Gradio), deployed privately | Once answers are trustworthy |
+
